@@ -1,6 +1,8 @@
-@net_project_HostAddress = http://localhost:5057
+@net_project_HostAddress = http://localhost:3000
 
 GET {{net_project_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+GET {{net_project_HostAddress}}/api/bargain
+Accept: application/json
