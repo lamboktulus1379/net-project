@@ -1,0 +1,6 @@
+﻿services:
+  net-project:
+    image: net-project
+    build:
+      context: .
+      dockerfile: net-project/Dockerfile
