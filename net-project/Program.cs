@@ -1,4 +1,7 @@
 using System.Data.Odbc;
+using NetProject.Domain.Interfaces;
+using NetProject.Infrastructure.Repositories;
+using NetProject.Usecase;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,6 +30,10 @@ builder.Services.AddTransient<OdbcConnection>(sp =>
         .Replace("{USR}", user).Replace("{PWD}", password);
     return new OdbcConnection(connectionString);
 });
+
+builder.Services.AddScoped<IBargainRepository, BargainRepository>();
+builder.Services.AddScoped<IBargainUsecase, BargainUsecase>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

@@ -12,6 +12,7 @@
         <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0"/>
         <PackageReference Include="Microsoft.VisualStudio.Web.CodeGeneration.Design" Version="9.0.0" />
         <PackageReference Include="System.Data.Odbc" Version="9.0.0" />
+        <PackageReference Include="System.Data.OleDb" Version="9.0.0" />
     </ItemGroup>
 
     <ItemGroup>
@@ -22,6 +23,8 @@
 
     <ItemGroup>
       <ProjectReference Include="..\NetProject.Domain\NetProject.Domain.csproj" />
+      <ProjectReference Include="..\NetProject.Infrastructure\NetProject.Infrastructure.csproj" />
+      <ProjectReference Include="..\NetProject.Usecase\NetProject.Usecase.csproj" />
     </ItemGroup>
 
 </Project>

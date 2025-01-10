@@ -1,36 +1,36 @@
-using System.Data.Odbc;
 using Microsoft.AspNetCore.Mvc;
-using NetProject.Domain.TransactionAggregates;
+using NetProject.Usecase;
 
 namespace net_project.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    public class BargainController(OdbcConnection dbConnection) : ControllerBase
+    public class BargainController(IBargainUsecase bargainUsecase) : ControllerBase
     {
-        [HttpGet]
-        public async Task<IActionResult> GetAll()
+        [HttpGet("histories")]
+        public async Task<IActionResult> GetHistories([FromQuery] string accountId, [FromQuery] DateTime startDate, [FromQuery] DateTime endDate)
         {
-            await dbConnection.OpenAsync();
-            var command = new OdbcCommand("SELECT Id, OrderId, UserId, Amount, Status, CreatedAt, UpdatedAt FROM dbo.[Bargain]", dbConnection);
-            var reader = await command.ExecuteReaderAsync();
-            var bargains = new List<Bargain>();
-            while (await reader.ReadAsync())
-            {
-                var bargain = new Bargain()
-                {
-                    Id = reader.GetInt32(0),
-                    OrderId = reader.GetInt32(1),
-                    UserId = reader.GetInt32(2),
-                    Amount = reader.GetDecimal(3),
-                    Status = reader.GetInt32(4),
-                    CreatedAt = reader.GetDateTime(5),
-                    UpdatedAt = reader.GetDateTime(6)
-                };
-                bargains.Add(bargain);
-            }
-            await dbConnection.CloseAsync();
-            return Ok(bargains);
+            endDate = endDate.AddHours(23).AddHours(59).AddMinutes(50);
+            var histories = await bargainUsecase.GetHistories(accountId, startDate, endDate);
+            return Ok(histories);
+        }
+
+        [HttpPut]
+        public IActionResult Deposit()
+        {
+            return Ok();
+        }
+        
+        [HttpPut]
+        public IActionResult Withdraw()
+        {
+            return Ok();
+        }
+        
+        [HttpPut]
+        public IActionResult Transfer()
+        {
+            return Ok();
         }
     }
 }
