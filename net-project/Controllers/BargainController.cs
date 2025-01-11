@@ -23,10 +23,11 @@ namespace net_project.Controllers
             return Ok(res);
         }
         
-        [HttpPut]
-        public IActionResult Withdraw()
+        [HttpPut("withdraw")]
+        public async Task<IActionResult> Deposit([FromBody] WithdrawForCreation withdrawForCreation)
         {
-            return Ok();
+            var res = await bargainUsecase.Withdraw(withdrawForCreation.AccountId, withdrawForCreation.Amount);
+            return Ok(res);
         }
         
         [HttpPut("transfer")]

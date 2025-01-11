@@ -18,6 +18,16 @@ Accept: application/json
 }
 
 ###
+PUT {{net_project_HostAddress}}/api/bargain/withdraw
+Content-Type: application/json
+Accept: application/json
+
+{
+  "accountId": "000109999999",
+  "amount": 1
+}
+
+###
 PUT {{net_project_HostAddress}}/api/Bargain/transfer
 Content-Type: application/json
 Accept: application/json
