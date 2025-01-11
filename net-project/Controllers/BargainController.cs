@@ -16,10 +16,11 @@ namespace net_project.Controllers
             return Ok(histories);
         }
 
-        [HttpPut]
-        public IActionResult Deposit()
+        [HttpPut("deposit")]
+        public async Task<IActionResult> Deposit([FromBody] DepositForCreation depositForCreation)
         {
-            return Ok();
+            var res = await bargainUsecase.Deposit(depositForCreation.AccountId, depositForCreation.Amount);
+            return Ok(res);
         }
         
         [HttpPut]

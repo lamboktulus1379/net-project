@@ -6,6 +6,7 @@ namespace NetProject.Usecase;
 public interface IBargainUsecase
 {
     public Task<IEnumerable<History>> GetHistories(string accountId, DateTime startDate, DateTime endDate);
+    public Task<decimal> Deposit(string accountId, decimal amount);
     public Task<string> Transfer(string accountId, string[] accountIds, decimal amount);
 }
 
@@ -24,8 +25,18 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
         }
     }
 
-    public void Deposit()
+    public async Task<decimal> Deposit(string accountId, decimal amount)
     {
+        try
+        {
+            var res = await bargainRepository.Deposit(accountId, amount);
+            return res;
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
     }
 
     public void Withdraw()

@@ -46,8 +46,93 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
         }
     }
 
-    public async Task Deposit(string accountId, string[] accountIds, decimal Amount)
+    public async Task<decimal> Deposit(string accountId, decimal Amount)
     {
+        await dbConnection.OpenAsync();
+        // Set the transaction isolation level to snapshot
+        await using (OdbcCommand setIsolationLevelCommand =
+                     new OdbcCommand("SET TRANSACTION ISOLATION LEVEL SNAPSHOT", dbConnection))
+        {
+            await setIsolationLevelCommand.ExecuteNonQueryAsync();
+        }
+
+        OdbcTransaction transaction = dbConnection.BeginTransaction();
+        try
+        {
+            string selectQuery = "SELECT decAmount FROM BOS_Balance WITH (UPDLOCK) WHERE szAccountId = ?";
+            OdbcCommand selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
+            selectCommand.Parameters.Add(new OdbcParameter("@szAccountId", accountId));
+            decimal currentBalance = (decimal)(await selectCommand.ExecuteScalarAsync());
+
+            decimal newBalance = currentBalance + Amount;
+
+            string updateQuery = "UPDATE BOS_Balance SET decAmount = ? WHERE szAccountId = ?";
+            using (OdbcCommand updateCommand = new OdbcCommand(updateQuery, dbConnection, transaction))
+            {
+                updateCommand.Parameters.Add(new OdbcParameter("@decAmount", newBalance));
+                updateCommand.Parameters.Add(new OdbcParameter("@szAccountId", accountId));
+                await updateCommand.ExecuteNonQueryAsync();
+            }
+
+            // Retrieve and increment the last number from BOS_Counter
+            string counterQuery =
+                "SELECT iLastNumber FROM BOS_Counter WITH (UPDLOCK) WHERE szCounterId = '001-COU'";
+            OdbcCommand counterCommand = new OdbcCommand(counterQuery, dbConnection, transaction);
+            long iLastNumber = (long)await counterCommand.ExecuteScalarAsync();
+
+            // Increment the last number
+            iLastNumber++;
+
+            // Update the BOS_Counter table with the new last number
+            string updateCounterQuery = "UPDATE BOS_Counter SET iLastNumber = ? WHERE szCounterId = '001-COU'";
+            OdbcCommand updateCounterCommand = new OdbcCommand(updateCounterQuery, dbConnection, transaction);
+            updateCounterCommand.Parameters.AddWithValue("@iLastNumber", iLastNumber);
+            await updateCounterCommand.ExecuteNonQueryAsync();
+
+            // Generate the new szTransactionId
+            DateTime originalDateTime = DateTime.Now;
+            string szTransactionId = $"{originalDateTime:yyyyMMdd}-00000.{iLastNumber:D5}";
+            DateTime adjustedDateTime = new DateTime(
+                originalDateTime.Year,
+                originalDateTime.Month,
+                originalDateTime.Day,
+                originalDateTime.Hour,
+                originalDateTime.Minute,
+                originalDateTime.Second
+            );
+
+
+            // Insert into BOS_history
+            StringBuilder insertQuery =
+                new StringBuilder(
+                    "INSERT INTO BOS_History (szTransactionId, szAccountId, szCurrencyId, dtmTransaction, decAmount, szNote) VALUES ");
+            List<OdbcParameter> parameters = new List<OdbcParameter>();
+
+            insertQuery.Append($"(?, ?, ?, ?, ?, ?)");
+            parameters.AddRange(new OdbcParameter[]
+            {
+                new OdbcParameter("@szTransactionId", szTransactionId),
+                new OdbcParameter("@szAccountId", accountId),
+                new OdbcParameter("@szCurrencyId", Currency.IDR.ToString()),
+                new OdbcParameter("@dtmTransaction", OdbcType.DateTime) { Value = adjustedDateTime },
+                new OdbcParameter("@decAmount", Amount),
+                new OdbcParameter("@szNote", Note.SETOR.ToString())
+            });
+
+            OdbcCommand insertCommand = new OdbcCommand(insertQuery.ToString(), dbConnection, transaction);
+            insertCommand.Parameters.AddRange(parameters.ToArray());
+            await insertCommand.ExecuteNonQueryAsync();
+
+            await transaction.CommitAsync();
+            await dbConnection.CloseAsync();
+            return newBalance;
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync();
+            Console.WriteLine("Error: " + ex.Message);
+            throw;
+        }
     }
 
     public void Withdraw()
@@ -148,7 +233,8 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
                     transferBalance += amount;
                     string updateQueryReceiver =
                         "UPDATE BOS_Balance SET decAmount = ? WHERE szAccountId = ? AND szCurrencyId = ?";
-                    OdbcCommand updateCommandReceiver = new OdbcCommand(updateQueryReceiver, dbConnection, transaction);
+                    OdbcCommand updateCommandReceiver =
+                        new OdbcCommand(updateQueryReceiver, dbConnection, transaction);
                     updateCommandReceiver.Parameters.AddWithValue("@decAmount", transferBalance);
                     updateCommandReceiver.Parameters.AddWithValue("@szAccountId", accountIds[i]);
                     updateCommandReceiver.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
