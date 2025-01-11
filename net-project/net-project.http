@@ -6,3 +6,14 @@ Accept: application/json
 ###
 GET {{net_project_HostAddress}}/api/bargain/histories?accountId=000108757484&startDate=2025-01-10&endDate=2025-01-10
 Accept: application/json
+
+###
+PUT {{net_project_HostAddress}}/api/Bargain/transfer
+Content-Type: application/json
+Accept: application/json
+
+{
+  "from": "000108757484",
+  "to": ["000109999999"],
+  "amount": 1
+}

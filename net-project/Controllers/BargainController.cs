@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NetProject.Domain.DataTransferObjects;
 using NetProject.Usecase;
 
 namespace net_project.Controllers
@@ -27,10 +28,11 @@ namespace net_project.Controllers
             return Ok();
         }
         
-        [HttpPut]
-        public IActionResult Transfer()
+        [HttpPut("transfer")]
+        public async Task<IActionResult> Transfer([FromBody] TransferForCreation transferForCreation)
         {
-            return Ok();
+            var res = await bargainUsecase.Transfer(transferForCreation.From, transferForCreation.To, transferForCreation.Amount);
+            return Ok(res);
         }
     }
 }
