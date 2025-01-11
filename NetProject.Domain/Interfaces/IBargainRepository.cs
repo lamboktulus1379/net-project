@@ -7,5 +7,5 @@ public interface IBargainRepository
     public Task<IEnumerable<History>> GetAll(string accountId, DateTime startDate, DateTime endDate);
     public Task<decimal> Deposit(string accountId, decimal amount);
     public Task<decimal> Withdraw(string accountId, decimal amount);
-    public Task<string> Transfer(string accountId, string[] accountIds, decimal amount);
+    public Task<decimal> Transfer(string accountId, string[] accountIds, decimal amount);
 }

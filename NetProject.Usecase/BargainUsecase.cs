@@ -1,3 +1,4 @@
+using NetProject.Domain.DataTransferObjects;
 using NetProject.Domain.Interfaces;
 using NetProject.Domain.TransactionAggregates;
 
@@ -6,9 +7,9 @@ namespace NetProject.Usecase;
 public interface IBargainUsecase
 {
     public Task<IEnumerable<History>> GetHistories(string accountId, DateTime startDate, DateTime endDate);
-    public Task<decimal> Deposit(string accountId, decimal amount);
-    public Task<decimal> Withdraw(string accountId, decimal amount);
-    public Task<string> Transfer(string accountId, string[] accountIds, decimal amount);
+    public Task<GeneralResponse> Deposit(string accountId, decimal amount);
+    public Task<GeneralResponse> Withdraw(string accountId, decimal amount);
+    public Task<GeneralResponse> Transfer(string accountId, string[] accountIds, decimal amount);
 }
 
 public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsecase
@@ -26,12 +27,17 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
         }
     }
 
-    public async Task<decimal> Deposit(string accountId, decimal amount)
+    public async Task<GeneralResponse> Deposit(string accountId, decimal amount)
     {
         try
         {
             var res = await bargainRepository.Deposit(accountId, amount);
-            return res;
+            var response = new GeneralResponse()
+            {
+                AccountId = accountId,
+                Amount = res
+            };
+            return response;
         }
         catch (Exception e)
         {
@@ -40,12 +46,17 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
         }
     }
 
-    public async Task<decimal> Withdraw(string accountId, decimal amount)
+    public async Task<GeneralResponse> Withdraw(string accountId, decimal amount)
     {
         try
         {
             var res = await bargainRepository.Withdraw(accountId, amount);
-            return res;
+            var response = new GeneralResponse()
+            {
+                AccountId = accountId,
+                Amount = res
+            };
+            return response;
         }
         catch (Exception e)
         {
@@ -54,9 +65,14 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
         }
     }
 
-    public async Task<string> Transfer(string accountId, string[] accountIds, decimal amount)
+    public async Task<GeneralResponse> Transfer(string accountId, string[] accountIds, decimal amount)
     {
         var res = await bargainRepository.Transfer(accountId, accountIds, amount);
-        return res;
+        var response = new GeneralResponse()
+        {
+            AccountId = accountId,
+            Amount = res
+        };
+        return response;
     }
 }

@@ -229,9 +229,8 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
         }
     }
 
-    public async Task<string> Transfer(string accountId, string[] accountIds, decimal amount)
+    public async Task<decimal> Transfer(string accountId, string[] accountIds, decimal amount)
     {
-        List<string> res = new();
         var note = Note.TRANSFER.ToString();
         await dbConnection.OpenAsync();
 
@@ -348,7 +347,6 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
                 // Generate the new szTransactionId
                 DateTime originalDateTime = DateTime.Now;
                 string szTransactionId = $"{originalDateTime:yyyyMMdd}-00000.{iLastNumber:D5}";
-                res.Add(szTransactionId);
 
                 DateTime adjustedDateTime = new DateTime(
                     originalDateTime.Year,
@@ -388,8 +386,9 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
 
             // Commit the transaction
             transaction.Commit();
+            await dbConnection.CloseAsync();
 
-            return string.Join(",", res);
+            return currentBalance;
         }
         catch (Exception e)
         {
