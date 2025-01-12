@@ -59,7 +59,7 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
         OdbcTransaction transaction = dbConnection.BeginTransaction();
         try
         {
-            string selectQuery = "SELECT decAmount FROM BOS_Balance WITH (UPDLOCK) WHERE szAccountId = ?";
+            var selectQuery = "SELECT decAmount FROM BOS_Balance WITH (UPDLOCK) WHERE szAccountId = ?";
             OdbcCommand selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
             selectCommand.Parameters.Add(new OdbcParameter("@szAccountId", accountId));
             decimal currentBalance = (decimal)(await selectCommand.ExecuteScalarAsync());
@@ -152,7 +152,7 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
             OdbcCommand selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
             selectCommand.Parameters.Add(new OdbcParameter("@szAccountId", accountId));
             decimal currentBalance = (decimal)(await selectCommand.ExecuteScalarAsync());
-            
+
             if (currentBalance < amount)
             {
                 throw new Exception("Insufficient balance.");
@@ -231,170 +231,206 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
 
     public async Task<decimal> Transfer(string accountId, string[] accountIds, decimal amount)
     {
-        var note = Note.TRANSFER.ToString();
+        return await ExecuteWithRetryAsync(async dbConnection =>
+        {
+            var note = Note.TRANSFER.ToString();
+
+            // Set the transaction isolation level to snapshot
+            await using (OdbcCommand setIsolationLevelCommand =
+                         new OdbcCommand("SET TRANSACTION ISOLATION LEVEL SNAPSHOT", dbConnection))
+            {
+                await setIsolationLevelCommand.ExecuteNonQueryAsync();
+            }
+
+            // Start a transaction
+            await using (var transaction = dbConnection.BeginTransaction())
+            {
+                try
+                {
+                    var numberAccounts = accountIds.Length;
+
+                    // Update the BOS_Balance table for the account that is transferring the money.
+                    // Read and lock the current balance
+                    string selectQuery =
+                        "SELECT decAmount FROM BOS_Balance WHERE szAccountId = ? AND szCurrencyId = ?";
+                    await using var selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
+                    selectCommand.Parameters.AddWithValue("@szAccountId", accountId);
+                    selectCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
+
+                    decimal currentBalance = 0;
+                    await using (var reader = await selectCommand.ExecuteReaderAsync())
+                    {
+                        if (await reader.ReadAsync())
+                        {
+                            currentBalance = reader.GetDecimal(reader.GetOrdinal("decAmount"));
+                        }
+                        else
+                        {
+                            currentBalance = 0;
+                        }
+                    }
+
+                    decimal totalAmountSubtracted = numberAccounts * amount;
+                    if (currentBalance < totalAmountSubtracted)
+                    {
+                        throw new Exception("Insufficient balance.");
+                    }
+
+                    // Insert two records for each account in the BOS_History table.
+                    StringBuilder insertQuery =
+                        new StringBuilder(
+                            "INSERT INTO BOS_History (szTransactionId, szAccountId, szCurrencyId, dtmTransaction, decAmount, szNote) VALUES ");
+                    List<OdbcParameter> parameters = new List<OdbcParameter>();
+
+                    for (var i = 0; i < numberAccounts; i++)
+                    {
+                        var receiverExists = await CheckIfRowExistsAsync(accountIds[i], Currency.IDR.ToString());
+
+                        if (receiverExists)
+                        {
+                            // Update the balance for account that is transferring the money
+                            decimal newBalance = currentBalance - amount;
+                            var updateQuery =
+                                "UPDATE BOS_Balance WITH (UPDLOCK) SET decAmount = decAmount - ? WHERE szAccountId = ? AND szCurrencyId = ?";
+                            await using (var updateCommand =
+                                         new OdbcCommand(updateQuery, dbConnection, transaction))
+                            {
+                                updateCommand.Parameters.AddWithValue("@incrementAmount", amount);
+                                updateCommand.Parameters.AddWithValue("@szAccountId", accountId);
+                                updateCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
+                                await updateCommand.ExecuteNonQueryAsync();
+                                currentBalance = newBalance;
+                            }
+
+                            // Update the balance for the account that is receiving the money
+                            var updateQueryReceiver =
+                                "UPDATE BOS_Balance WITH (UPDLOCK) SET decAmount = decAmount + ? WHERE szAccountId = ? AND szCurrencyId = ?";
+                            await using (var updateCommandReceiver =
+                                         new OdbcCommand(updateQueryReceiver, dbConnection, transaction))
+                            {
+                                updateCommandReceiver.Parameters.AddWithValue("@incrementAmount", amount);
+                                updateCommandReceiver.Parameters.AddWithValue("@szAccountId", accountIds[i]);
+                                updateCommandReceiver.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
+                                await updateCommandReceiver.ExecuteNonQueryAsync();
+                            }
+                        }
+
+                        // Retrieve and increment the last number from BOS_Counter
+                        var counterQuery =
+                            "SELECT iLastNumber FROM BOS_Counter WHERE szCounterId = '001-COU'";
+                        await using (var counterCommand =
+                                     new OdbcCommand(counterQuery, dbConnection, transaction))
+                        {
+                            long iLastNumber = (long)await counterCommand.ExecuteScalarAsync();
+
+                            // Increment the last number
+                            iLastNumber++;
+
+                            // Update the BOS_Counter table with the new last number
+                            var updateCounterQuery =
+                                "UPDATE BOS_Counter SET iLastNumber = ? WHERE szCounterId = '001-COU'";
+                            await using (var updateCounterCommand =
+                                         new OdbcCommand(updateCounterQuery, dbConnection, transaction))
+                            {
+                                updateCounterCommand.Parameters.AddWithValue("@iLastNumber", iLastNumber);
+                                await updateCounterCommand.ExecuteNonQueryAsync();
+                            }
+
+                            // Generate the new szTransactionId
+                            DateTime originalDateTime = DateTime.Now;
+                            string szTransactionId = $"{originalDateTime:yyyyMMdd}-00000.{iLastNumber:D5}";
+
+                            DateTime adjustedDateTime = new DateTime(
+                                originalDateTime.Year,
+                                originalDateTime.Month,
+                                originalDateTime.Day,
+                                originalDateTime.Hour,
+                                originalDateTime.Minute,
+                                originalDateTime.Second
+                            );
+
+                            insertQuery.Append($"(?, ?, ?, ?, ?, ?)");
+                            insertQuery.Append(", ");
+                            insertQuery.Append($"(?, ?, ?, ?, ?, ?)");
+                            parameters.AddRange(new[]
+                            {
+                                new OdbcParameter($"@szTransactionId{i}", szTransactionId),
+                                new OdbcParameter($"@szAccountId{i}", accountId),
+                                new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
+                                new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime)
+                                    { Value = adjustedDateTime },
+                                new OdbcParameter($"@decAmount{i}", -amount),
+                                new OdbcParameter($"@szNote{i}", note)
+                            });
+                            parameters.AddRange(new[]
+                            {
+                                new OdbcParameter($"@szTransactionId{i}", szTransactionId),
+                                new OdbcParameter($"@szAccountId{i}", accountIds[i]),
+                                new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
+                                new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime)
+                                    { Value = adjustedDateTime },
+                                new OdbcParameter($"@decAmount{i}", amount),
+                                new OdbcParameter($"@szNote{i}", note)
+                            });
+                        }
+                    }
+
+                    await using (var insertCommand =
+                                 new OdbcCommand(insertQuery.ToString(), dbConnection, transaction))
+                    {
+                        insertCommand.Parameters.AddRange(parameters.ToArray());
+                        await insertCommand.ExecuteNonQueryAsync();
+                    }
+
+                    // Commit the transaction
+                    transaction.Commit();
+                    return currentBalance;
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                    transaction.Rollback();
+                    throw;
+                }
+            }
+        }, dbConnection.ConnectionString);
+    }
+
+    public static async Task<T> ExecuteWithRetryAsync<T>(Func<OdbcConnection, Task<T>> operation,
+        string connectionString, int maxRetryCount = 3, int delayMilliseconds = 1000)
+    {
+        int retryCount = 0;
+        while (true)
+        {
+            await using var dbConnection = new OdbcConnection(connectionString);
+            try
+            {
+                await dbConnection.OpenAsync();
+                return await operation(dbConnection);
+            }
+            catch (OdbcException ex) when (ex.Errors.Cast<OdbcError>().Any(e => e.SQLState == "42000"))
+            {
+                if (++retryCount >= maxRetryCount)
+                    throw;
+                await Task.Delay(delayMilliseconds); // Wait before retrying
+            }
+            finally
+            {
+                await dbConnection.CloseAsync();
+            }
+        }
+    }
+
+    public async Task<bool> CheckIfRowExistsAsync(string accountId, string currency)
+    {
+        const string selectQuery = "SELECT 1 FROM BOS_Balance WHERE szAccountId = ? AND szCurrencyId = ?";
+
         await dbConnection.OpenAsync();
+        await using var selectCommand = new OdbcCommand(selectQuery, dbConnection);
+        selectCommand.Parameters.AddWithValue("@szAccountId", accountId);
+        selectCommand.Parameters.AddWithValue("@szCurrencyId", currency);
 
-        // Set the transaction isolation level to snapshot
-        await using (OdbcCommand setIsolationLevelCommand =
-                     new OdbcCommand("SET TRANSACTION ISOLATION LEVEL SNAPSHOT", dbConnection))
-        {
-            await setIsolationLevelCommand.ExecuteNonQueryAsync();
-        }
-
-        // Start a transaction
-        OdbcTransaction transaction = dbConnection.BeginTransaction();
-
-        try
-        {
-            var numberAccounts = accountIds.Length;
-
-            // Update the BOS_Balance table for the account that is transferring the money.
-            // Read and lock the current balance
-            string selectQuery =
-                "SELECT decAmount FROM BOS_Balance WITH (UPDLOCK, ROWLOCK) WHERE szAccountId = ? AND szCurrencyId = ?";
-            OdbcCommand selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
-            selectCommand.Parameters.AddWithValue("@szAccountId", accountId);
-            selectCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
-
-            decimal currentBalance = 0;
-            await using (var reader = await selectCommand.ExecuteReaderAsync())
-            {
-                if (await reader.ReadAsync())
-                {
-                    currentBalance = reader.GetDecimal(reader.GetOrdinal("decAmount"));
-                }
-                else
-                {
-                    currentBalance = 0;
-                }
-            }
-
-            decimal totalAmountSubstracted = numberAccounts * amount;
-            if (currentBalance < totalAmountSubstracted)
-            {
-                throw new Exception("Insufficient balance.");
-            }
-
-            // Insert two records for each account in the BOS_History table.
-            StringBuilder insertQuery =
-                new StringBuilder(
-                    "INSERT INTO BOS_History (szTransactionId, szAccountId, szCurrencyId, dtmTransaction, decAmount, szNote) VALUES ");
-            List<OdbcParameter> parameters = new List<OdbcParameter>();
-
-            for (var i = 0; i < numberAccounts; i++)
-            {
-                bool receiverExists = false;
-                // Update the balance for the account that is receiving the money
-                selectQuery =
-                    "SELECT decAmount FROM BOS_Balance WITH (UPDLOCK, ROWLOCK) WHERE szAccountId = ? AND szCurrencyId = ?";
-                selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
-                selectCommand.Parameters.AddWithValue("@szAccountId", accountIds[i]);
-                selectCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
-
-                decimal transferBalance = 0;
-                await using (var reader = await selectCommand.ExecuteReaderAsync())
-                {
-                    if (await reader.ReadAsync())
-                    {
-                        transferBalance = reader.GetDecimal(reader.GetOrdinal("decAmount"));
-                        receiverExists = true;
-                    }
-                    else
-                    {
-                        transferBalance = 0;
-                    }
-                }
-
-                if (receiverExists)
-                {
-                    // Update the balance for account that is transferring the money
-                    decimal newBalance = currentBalance - amount;
-                    string updateQuery =
-                        "UPDATE BOS_Balance SET decAmount = ? WHERE szAccountId = ? AND szCurrencyId = ?";
-                    OdbcCommand updateCommand = new OdbcCommand(updateQuery, dbConnection, transaction);
-                    updateCommand.Parameters.AddWithValue("@decAmount", newBalance);
-                    updateCommand.Parameters.AddWithValue("@szAccountId", accountId);
-                    updateCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
-                    await updateCommand.ExecuteNonQueryAsync();
-                    currentBalance = newBalance;
-
-                    // Update the balance for the account that is receiving the money
-                    transferBalance += amount;
-                    string updateQueryReceiver =
-                        "UPDATE BOS_Balance SET decAmount = ? WHERE szAccountId = ? AND szCurrencyId = ?";
-                    OdbcCommand updateCommandReceiver =
-                        new OdbcCommand(updateQueryReceiver, dbConnection, transaction);
-                    updateCommandReceiver.Parameters.AddWithValue("@decAmount", transferBalance);
-                    updateCommandReceiver.Parameters.AddWithValue("@szAccountId", accountIds[i]);
-                    updateCommandReceiver.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
-                    await updateCommandReceiver.ExecuteNonQueryAsync();
-                }
-
-                // Retrieve and increment the last number from BOS_Counter
-                string counterQuery = "SELECT iLastNumber FROM BOS_Counter WHERE szCounterId = '001-COU'";
-                OdbcCommand counterCommand = new OdbcCommand(counterQuery, dbConnection, transaction);
-                long iLastNumber = (long)await counterCommand.ExecuteScalarAsync();
-
-                // Increment the last number
-                iLastNumber++;
-
-                // Update the BOS_Counter table with the new last number
-                string updateCounterQuery = "UPDATE BOS_Counter SET iLastNumber = ? WHERE szCounterId = '001-COU'";
-                OdbcCommand updateCounterCommand = new OdbcCommand(updateCounterQuery, dbConnection, transaction);
-                updateCounterCommand.Parameters.AddWithValue("@iLastNumber", iLastNumber);
-                await updateCounterCommand.ExecuteNonQueryAsync();
-
-                // Generate the new szTransactionId
-                DateTime originalDateTime = DateTime.Now;
-                string szTransactionId = $"{originalDateTime:yyyyMMdd}-00000.{iLastNumber:D5}";
-
-                DateTime adjustedDateTime = new DateTime(
-                    originalDateTime.Year,
-                    originalDateTime.Month,
-                    originalDateTime.Day,
-                    originalDateTime.Hour,
-                    originalDateTime.Minute,
-                    originalDateTime.Second
-                );
-
-                insertQuery.Append($"(?, ?, ?, ?, ?, ?)");
-                insertQuery.Append(", ");
-                insertQuery.Append($"(?, ?, ?, ?, ?, ?)");
-                parameters.AddRange(new OdbcParameter[]
-                {
-                    new OdbcParameter($"@szTransactionId{i}", szTransactionId),
-                    new OdbcParameter($"@szAccountId{i}", accountId),
-                    new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
-                    new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime) { Value = adjustedDateTime },
-                    new OdbcParameter($"@decAmount{i}", -amount),
-                    new OdbcParameter($"@szNote{i}", note)
-                });
-                parameters.AddRange(new OdbcParameter[]
-                {
-                    new OdbcParameter($"@szTransactionId{i}", szTransactionId),
-                    new OdbcParameter($"@szAccountId{i}", accountIds[i]),
-                    new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
-                    new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime) { Value = adjustedDateTime },
-                    new OdbcParameter($"@decAmount{i}", amount),
-                    new OdbcParameter($"@szNote{i}", note)
-                });
-            }
-
-            OdbcCommand insertCommand = new OdbcCommand(insertQuery.ToString(), dbConnection, transaction);
-            insertCommand.Parameters.AddRange(parameters.ToArray());
-            await insertCommand.ExecuteNonQueryAsync();
-
-            // Commit the transaction
-            transaction.Commit();
-            await dbConnection.CloseAsync();
-
-            return currentBalance;
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            transaction.Rollback();
-            throw;
-        }
+        await using var reader = await selectCommand.ExecuteReaderAsync();
+        return await reader.ReadAsync();
     }
 }
