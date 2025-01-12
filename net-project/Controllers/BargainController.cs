@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using NetProject.Domain.DataTransferObjects;
+using NetProject.Domain.TransactionAggregates;
 using NetProject.Usecase;
 
 namespace net_project.Controllers
@@ -33,7 +34,35 @@ namespace net_project.Controllers
         [HttpPut("transfer")]
         public async Task<IActionResult> Transfer([FromBody] TransferForCreation transferForCreation)
         {
-            var res = await bargainUsecase.Transfer(transferForCreation.From, transferForCreation.To, transferForCreation.Amount);
+            var tos = new List<To>();
+            foreach (var toCreation in transferForCreation.Tos)
+            {
+                var to = new To();
+                if (toCreation.Currency == "IDR")
+                {
+                    to.AccountId = toCreation.AccountId;
+                    to.Amount = toCreation.Amount;
+                    to.Currency = Currency.IDR;
+                }
+                else if (toCreation.Currency == "USD")
+                {
+                    to.AccountId = toCreation.AccountId;
+                    to.Amount = toCreation.Amount;
+                    to.Currency = Currency.USD;
+                }
+                else if (toCreation.Currency == "SGD")
+                {
+                    to.AccountId = toCreation.AccountId;
+                    to.Amount = toCreation.Amount;
+                    to.Currency = Currency.SGD;
+                }
+                else
+                {
+                    return NotFound("Currency not found");
+                }
+                tos.Add(to);
+            }
+            var res = await bargainUsecase.Transfer(transferForCreation.From, tos.ToArray());
             return Ok(res);
         }
     }

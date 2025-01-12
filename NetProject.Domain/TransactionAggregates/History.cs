@@ -12,7 +12,8 @@ public enum Note
 public enum Currency
 {
     IDR,
-    SGD
+    SGD,
+    USD
 }
 
 public class History

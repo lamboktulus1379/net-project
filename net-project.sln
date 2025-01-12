@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetProject.Usecase", "NetPr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetProject.Infrastructure", "NetProject.Infrastructure\NetProject.Infrastructure.csproj", "{B005076B-1EE9-4CDC-9101-1D586DED7EB5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NetProject.Test", "NetProject.Test\NetProject.Test.csproj", "{7065F1F4-6651-48BA-A3BC-A7F3F05446F6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -35,5 +37,9 @@ Global
 		{B005076B-1EE9-4CDC-9101-1D586DED7EB5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B005076B-1EE9-4CDC-9101-1D586DED7EB5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B005076B-1EE9-4CDC-9101-1D586DED7EB5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7065F1F4-6651-48BA-A3BC-A7F3F05446F6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7065F1F4-6651-48BA-A3BC-A7F3F05446F6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7065F1F4-6651-48BA-A3BC-A7F3F05446F6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7065F1F4-6651-48BA-A3BC-A7F3F05446F6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -34,6 +34,11 @@ Accept: application/json
 
 {
   "from": "000108757484",
-  "to": ["000109999999"],
-  "amount": 1
+  "tos": [
+    {
+      "accountId": "000109999999",
+      "amount": 1,
+      "currency": "IDR"
+    }
+  ]
 }

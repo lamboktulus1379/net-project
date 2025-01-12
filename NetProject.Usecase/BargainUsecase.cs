@@ -9,7 +9,7 @@ public interface IBargainUsecase
     public Task<IEnumerable<History>> GetHistories(string accountId, DateTime startDate, DateTime endDate);
     public Task<GeneralResponse> Deposit(string accountId, decimal amount);
     public Task<GeneralResponse> Withdraw(string accountId, decimal amount);
-    public Task<GeneralResponse> Transfer(string accountId, string[] accountIds, decimal amount);
+    public Task<List<GeneralResponse>> Transfer(string accountId, To[] tos);
 }
 
 public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsecase
@@ -65,14 +65,22 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
         }
     }
 
-    public async Task<GeneralResponse> Transfer(string accountId, string[] accountIds, decimal amount)
+    public async Task<List<GeneralResponse>> Transfer(string accountId, To[] tos)
     {
-        var res = await bargainRepository.Transfer(accountId, accountIds, amount);
-        var response = new GeneralResponse()
+        var isOk = await bargainRepository.Transfer(accountId, tos);
+        var res = await bargainRepository.GetBalance(accountId);
+        // var res = new List<Balance>();
+        var generalResponses = new List<GeneralResponse>();
+        foreach (var to in res)
         {
-            AccountId = accountId,
-            Amount = res
-        };
-        return response;
+            var response = new GeneralResponse()
+            {
+                AccountId = to.AccountId,
+                CurrencyId = to.CurrencyId,
+                Amount = to.Amount
+            };
+            generalResponses.Add(response);
+        }
+        return generalResponses;
     }
 }

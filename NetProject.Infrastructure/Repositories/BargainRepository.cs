@@ -1,5 +1,6 @@
 using System.Data.Odbc;
 using System.Text;
+using NetProject.Domain.DataTransferObjects;
 using NetProject.Domain.Interfaces;
 using NetProject.Domain.TransactionAggregates;
 
@@ -229,7 +230,7 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
         }
     }
 
-    public async Task<decimal> Transfer(string accountId, string[] accountIds, decimal amount)
+    public async Task<bool> Transfer(string accountId, To[] tos)
     {
         return await ExecuteWithRetryAsync(async dbConnection =>
         {
@@ -247,59 +248,84 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
             {
                 try
                 {
-                    var numberAccounts = accountIds.Length;
+                    var numberAccounts = tos.Length;
 
                     // Update the BOS_Balance table for the account that is transferring the money.
                     // Read and lock the current balance
-                    string selectQuery =
-                        "SELECT decAmount FROM BOS_Balance WHERE szAccountId = ? AND szCurrencyId = ?";
+                    var selectQuery =
+                        "SELECT decAmount, szCurrencyId FROM BOS_Balance WHERE szAccountId = ?";
                     await using var selectCommand = new OdbcCommand(selectQuery, dbConnection, transaction);
                     selectCommand.Parameters.AddWithValue("@szAccountId", accountId);
-                    selectCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
 
-                    decimal currentBalance = 0;
+                    decimal currentBalanceSGD = 0;
+                    decimal currentBalanceIDR = 0;
+                    decimal currentBalanceUSD = 0;
                     await using (var reader = await selectCommand.ExecuteReaderAsync())
                     {
                         if (await reader.ReadAsync())
                         {
-                            currentBalance = reader.GetDecimal(reader.GetOrdinal("decAmount"));
-                        }
-                        else
-                        {
-                            currentBalance = 0;
+                            if (reader.GetString(reader.GetOrdinal("szCurrencyId")) == Currency.SGD.ToString())
+                            {
+                                currentBalanceSGD = reader.GetDecimal(reader.GetOrdinal("decAmount"));
+                            }
+                            else if (reader.GetString(reader.GetOrdinal("szCurrencyId")) == Currency.IDR.ToString())
+                            {
+                                currentBalanceIDR = reader.GetDecimal(reader.GetOrdinal("decAmount"));
+                            }
+                            else
+                            {
+                                currentBalanceUSD = reader.GetDecimal(reader.GetOrdinal("decAmount"));
+                            }
                         }
                     }
 
-                    decimal totalAmountSubtracted = numberAccounts * amount;
-                    if (currentBalance < totalAmountSubtracted)
+                    decimal totalAmountTransferedIDR = 0;
+                    decimal totalAmountTransferedSGD = 0;
+                    decimal totalAmountTransferedUSD = 0;
+                    foreach (var to in tos)
+                    {
+                        if (to.Currency == Currency.IDR)
+                        {
+                            totalAmountTransferedIDR += to.Amount;
+                        }
+                        else if (to.Currency == Currency.USD)
+                        {
+                            totalAmountTransferedUSD += to.Amount;
+                        }
+                        else
+                        {
+                            totalAmountTransferedSGD += to.Amount;
+                        }
+                    }
+
+                    if (currentBalanceIDR < totalAmountTransferedIDR || currentBalanceSGD < totalAmountTransferedSGD ||
+                        currentBalanceUSD < totalAmountTransferedUSD)
                     {
                         throw new Exception("Insufficient balance.");
                     }
 
                     // Insert two records for each account in the BOS_History table.
-                    StringBuilder insertQuery =
+                    var insertQuery =
                         new StringBuilder(
                             "INSERT INTO BOS_History (szTransactionId, szAccountId, szCurrencyId, dtmTransaction, decAmount, szNote) VALUES ");
-                    List<OdbcParameter> parameters = new List<OdbcParameter>();
+                    var parameters = new List<OdbcParameter>();
 
                     for (var i = 0; i < numberAccounts; i++)
                     {
-                        var receiverExists = await CheckIfRowExistsAsync(accountIds[i], Currency.IDR.ToString());
+                        var receiverExists = await CheckIfRowExistsAsync(tos[i].AccountId, tos[i].Currency.ToString());
 
                         if (receiverExists)
                         {
                             // Update the balance for account that is transferring the money
-                            decimal newBalance = currentBalance - amount;
                             var updateQuery =
                                 "UPDATE BOS_Balance WITH (UPDLOCK) SET decAmount = decAmount - ? WHERE szAccountId = ? AND szCurrencyId = ?";
                             await using (var updateCommand =
                                          new OdbcCommand(updateQuery, dbConnection, transaction))
                             {
-                                updateCommand.Parameters.AddWithValue("@incrementAmount", amount);
+                                updateCommand.Parameters.AddWithValue("@incrementAmount", tos[i].Amount);
                                 updateCommand.Parameters.AddWithValue("@szAccountId", accountId);
-                                updateCommand.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
+                                updateCommand.Parameters.AddWithValue("@szCurrencyId", tos[i].Currency.ToString());
                                 await updateCommand.ExecuteNonQueryAsync();
-                                currentBalance = newBalance;
                             }
 
                             // Update the balance for the account that is receiving the money
@@ -308,9 +334,9 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
                             await using (var updateCommandReceiver =
                                          new OdbcCommand(updateQueryReceiver, dbConnection, transaction))
                             {
-                                updateCommandReceiver.Parameters.AddWithValue("@incrementAmount", amount);
-                                updateCommandReceiver.Parameters.AddWithValue("@szAccountId", accountIds[i]);
-                                updateCommandReceiver.Parameters.AddWithValue("@szCurrencyId", Currency.IDR.ToString());
+                                updateCommandReceiver.Parameters.AddWithValue("@incrementAmount", tos[i].Amount);
+                                updateCommandReceiver.Parameters.AddWithValue("@szAccountId", tos[i].AccountId);
+                                updateCommandReceiver.Parameters.AddWithValue("@szCurrencyId", tos[i].Currency.ToString());
                                 await updateCommandReceiver.ExecuteNonQueryAsync();
                             }
                         }
@@ -356,20 +382,20 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
                             {
                                 new OdbcParameter($"@szTransactionId{i}", szTransactionId),
                                 new OdbcParameter($"@szAccountId{i}", accountId),
-                                new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
+                                new OdbcParameter($"@szCurrencyId{i}", tos[i].Currency.ToString()),
                                 new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime)
                                     { Value = adjustedDateTime },
-                                new OdbcParameter($"@decAmount{i}", -amount),
+                                new OdbcParameter($"@decAmount{i}", -tos[i].Amount),
                                 new OdbcParameter($"@szNote{i}", note)
                             });
                             parameters.AddRange(new[]
                             {
                                 new OdbcParameter($"@szTransactionId{i}", szTransactionId),
-                                new OdbcParameter($"@szAccountId{i}", accountIds[i]),
-                                new OdbcParameter($"@szCurrencyId{i}", Currency.IDR.ToString()),
+                                new OdbcParameter($"@szAccountId{i}", tos[i].AccountId),
+                                new OdbcParameter($"@szCurrencyId{i}", tos[i].Currency.ToString()),
                                 new OdbcParameter($"@dtmTransaction{i}", OdbcType.DateTime)
                                     { Value = adjustedDateTime },
-                                new OdbcParameter($"@decAmount{i}", amount),
+                                new OdbcParameter($"@decAmount{i}", tos[i].Amount),
                                 new OdbcParameter($"@szNote{i}", note)
                             });
                         }
@@ -384,7 +410,7 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
 
                     // Commit the transaction
                     transaction.Commit();
-                    return currentBalance;
+                    return true;
                 }
                 catch (Exception e)
                 {
@@ -393,6 +419,7 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
                     throw;
                 }
             }
+
         }, dbConnection.ConnectionString);
     }
 
@@ -420,6 +447,32 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
             }
         }
     }
+    
+    public async Task<List<Balance>> GetBalance(string accountId)
+    {
+        const string selectQuery = "SELECT decAmount, szAccountId, szCurrencyId FROM BOS_Balance WHERE szAccountId = ?";
+
+        await dbConnection.OpenAsync();
+        await using var selectCommand = new OdbcCommand(selectQuery, dbConnection);
+        selectCommand.Parameters.AddWithValue("@szAccountId", accountId);
+
+        await using var reader = await selectCommand.ExecuteReaderAsync();
+        List<Balance> balances = new List<Balance>();
+        while (await reader.ReadAsync())
+        {
+            Balance balance = new Balance
+            {
+                Amount = reader.GetDecimal(0),
+                CurrencyId = reader.GetString(2),
+                AccountId = reader.GetString(1)
+            };
+            balances.Add(balance);
+        }
+
+        await dbConnection.CloseAsync();
+
+        return balances;
+    }
 
     public async Task<bool> CheckIfRowExistsAsync(string accountId, string currency)
     {
@@ -431,6 +484,8 @@ public class BargainRepository(OdbcConnection dbConnection) : IBargainRepository
         selectCommand.Parameters.AddWithValue("@szCurrencyId", currency);
 
         await using var reader = await selectCommand.ExecuteReaderAsync();
-        return await reader.ReadAsync();
+        var res = await reader.ReadAsync();
+        await dbConnection.CloseAsync();
+        return res;
     }
 }
