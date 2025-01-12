@@ -35,6 +35,7 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
             var response = new GeneralResponse()
             {
                 AccountId = accountId,
+                CurrencyId = Currency.IDR.ToString(),
                 Amount = res
             };
             return response;
@@ -54,6 +55,7 @@ public class BargainUsecase(IBargainRepository bargainRepository) : IBargainUsec
             var response = new GeneralResponse()
             {
                 AccountId = accountId,
+                CurrencyId = Currency.IDR.ToString(),
                 Amount = res
             };
             return response;
